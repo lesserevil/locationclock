@@ -1,4 +1,5 @@
-#include <Servo.h>
+#include <Wire.h>
+#include <Adafruit_PWMServoDriver.h>
 #include <Adafruit_CC3000.h>
 #include <SPI.h>
 #include "utility/debug.h"
@@ -15,7 +16,8 @@ Adafruit_CC3000 cc3000 = Adafruit_CC3000(ADAFRUIT_CC3000_CS, ADAFRUIT_CC3000_IRQ
                          SPI_CLOCK_DIVIDER); // you can change this clock speed
 
 #define WLAN_SSID       "FBI Surveillance Van"           // cannot be longer than 32 characters!
-#define WLAN_PASS       "QueenVictoria"
+//#define WLAN_SSID       "CIA Black Helicopter"           // cannot be longer than 32 characters!
+#define WLAN_PASS       ""
 // Security can be WLAN_SEC_UNSEC, WLAN_SEC_WEP, WLAN_SEC_WPA or WLAN_SEC_WPA2
 #define WLAN_SECURITY   WLAN_SEC_WPA2
 
@@ -26,7 +28,11 @@ Adafruit_CC3000 cc3000 = Adafruit_CC3000(ADAFRUIT_CC3000_CS, ADAFRUIT_CC3000_IRQ
 
 Adafruit_CC3000_Server clockServer(LISTEN_PORT);
 
-Servo hands[4];
+#define MIN_PWM 121
+#define MAX_PWM 620
+Adafruit_PWMServoDriver pwm = Adafruit_PWMServoDriver();
+
+uint8_t hand_pos[NUM_OF_HANDS];
 
 void setup(void)
 {
@@ -34,6 +40,12 @@ void setup(void)
   Serial.println(F("Hello, CC3000!\n"));
 
   Serial.print("Free RAM: "); Serial.println(getFreeRam(), DEC);
+
+  setupHands();
+
+  for (int i = 1; i <= NUM_OF_HANDS; i++) {
+    moveHands(i, DEFAULT_POSITION);
+  }
 
   /* Initialise the module */
   Serial.println(F("\nInitializing..."));
@@ -62,14 +74,12 @@ void setup(void)
     delay(1000);
   }
 
-  setupHands();
-
-  for (int i = 1; i < NUM_OF_HANDS; i++) {
-    moveHands(i, DEFAULT_POSITION);
-  }
+  delay(5000);
 
   // Start listening for connections
   clockServer.begin();
+
+  delay(5000);
 
   Serial.println(F("Listening for connections..."));
 }
@@ -83,13 +93,14 @@ void loop(void)
   Adafruit_CC3000_ClientRef client = clockServer.available();
 
   if (client) {
+    Serial.println("Got a client...");
     while (client.available() > 0) {
       unsigned int tmp = client.read();
       //Is this a number?  If so, the it is the 'person'.
-      if (tmp >= 48 && tmp <= 57) {
+      if (tmp >= 49 && tmp <= 48 + NUM_OF_HANDS) {
         cPerson = tmp - 48;
       }
-      if (tmp >= 65 && tmp <= 90) {
+      if (tmp >= 65 && tmp <= 65 + 12) {
         cPosition = tmp - 64;
       }
       if (cPerson && cPosition) {
@@ -101,17 +112,29 @@ void loop(void)
   }
 }
 
-void moveHands(unsigned int person, unsigned int position) {
+void moveHands(unsigned int person, unsigned int pos) {
   Serial.print("Move hand ");
   Serial.print(person);
   Serial.print(" to position ");
-  Serial.print(position);
+  Serial.print(pos);
   Serial.println(".");
+
+  int curpos = map(hand_pos[person-1],0,12,MIN_PWM,MAX_PWM);
+  int newpos = map(pos,0,12,MIN_PWM,MAX_PWM);
+  int step = (curpos < newpos) ? 1 : -1;
+  for (int i = curpos; i != newpos; i += step) {
+    pwm.setPWM(person-1,0,i);
+    delay(50);
+  }
+  hand_pos[person-1] = pos;
 }
 
 void setupHands() {
-  for (int i = 0; i < NUM_OF_HANDS - 1; i++) {
-    //hands[i].attach(i + 6);
+  pwm.begin();
+  pwm.setPWMFreq(60);
+  
+  for (int i = 0; i <NUM_OF_HANDS; i++) {
+    hand_pos[i]=0;
   }
 }
 
@@ -138,15 +161,13 @@ bool displayConnectionDetails(void)
     Serial.print(F("\nDNSserv: ")); cc3000.printIPdotsRev(dnsserv);
     Serial.println();
 
-    uint8_t octet = ipAddress & 0xFFFFFF00;
+    uint32_t octet = ipAddress & 0x000000FF;
     uint8_t digit1 = octet / 100;
     uint8_t digit2 = octet / 10 - digit1 * 10;
     uint8_t digit3 = octet - (digit2 * 10) - (digit1 * 100);
     moveHands(1, digit1);
     moveHands(2, digit2);
     moveHands(3, digit3);
-
-    delay(15000);
 
     return true;
   }
